@@ -28,7 +28,7 @@ class ServerConfig:
 class OllamaConfig:
     """Ollama 配置"""
     host: str = "http://localhost:11434"
-    model: str = "qwen2.5-vl:32b"
+    model: str = "qwen2.5:7b"
     timeout: int = 300
 
 
