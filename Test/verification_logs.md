@@ -1,41 +1,44 @@
 # OpenClaw 验证日志
 
-此文件将在运行 `python main.py` 时自动更新。
+生成时间: 2026-02-04 07:53:34
 
 ---
 
-## 等待验证
+## 第一阶段: 项目骨架初始化
 
-请运行以下命令开始验证：
+**状态**: ❌ 未完全通过
+**通过**: 2/3
+**时间**: 2026-02-04 07:53:34
 
-```bash
-python main.py
-```
+### 检查项:
 
-或单独运行验证：
-
-```bash
-python -m Test.stage_tracker
-```
-
----
-
-## 预期验证项
-
-### 第一阶段: 项目骨架初始化
-
-1. **目录结构检查**
-   - UI/, LLM/, Gateway/, Tools/, Memory/, Config/, Logging/, Security/, Bridge/, Test/
-   
-2. **核心文件检查**
-   - 各层的 `__init__.py` 和核心模块文件
-   
-3. **UI 网络访问**
-   - 检查 http://localhost:8000 是否可访问
-   
-4. **LLM 连通性**
-   - 检查 Ollama 服务是否可用
+- **目录结构检查**: ✅ PASS
+  - 通过 15/15 个目录检查
+- **核心文件检查**: ✅ PASS
+  - 通过 42/42 个文件检查
+- **LLM 连通性**: ❌ FAIL
+  - Ollama 连接失败: Cannot connect to host localhost:11434 ssl:default [Multiple exceptions: [Errno 111] Connect call failed ('::1', 11434, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 11434)]
 
 ---
 
-*此文件由 OpenClaw Stage Tracker 自动生成*
+## 详细信息
+
+### 检查摘要
+
+| 检查项 | 状态 | 说明 |
+|--------|------|------|
+| 目录结构检查 | ✅ | 通过 15/15 个目录检查 |
+| 核心文件检查 | ✅ | 通过 42/42 个文件检查 |
+| LLM 连通性 | ❌ | Ollama 连接失败: Cannot connect to host localhost:11434 ssl:default [Multiple exceptions: [Errno 111] Connect call failed ('::1', 11434, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 11434)] |
+
+### 环境信息
+
+- **Python 版本**: 请运行 `python --version` 查看
+- **项目路径**: `/workspace`
+- **验证时间**: 2026-02-04 07:53:34
+
+### 下一步
+
+部分检查未通过，请检查以下问题：
+
+- **LLM 连通性**: Ollama 连接失败: Cannot connect to host localhost:11434 ssl:default [Multiple exceptions: [Errno 111] Connect call failed ('::1', 11434, 0, 0), [Errno 111] Connect call failed ('127.0.0.1', 11434)]
