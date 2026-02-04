@@ -44,7 +44,7 @@ class OllamaClient:
     """
     
     DEFAULT_HOST = "http://localhost:11434"
-    DEFAULT_MODEL = "qwen2.5-vl:32b"
+    DEFAULT_MODEL = "qwen2.5:7b"
     
     def __init__(
         self,
@@ -57,7 +57,7 @@ class OllamaClient:
         
         Args:
             host: Ollama 服务地址,默认 http://localhost:11434
-            model: 使用的模型名称,默认 qwen2.5-vl:32b
+            model: 使用的模型名称,默认 qwen2.5:7b
             timeout: 请求超时时间(秒)
         """
         self.host = host or self.DEFAULT_HOST

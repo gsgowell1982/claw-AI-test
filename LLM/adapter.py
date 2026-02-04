@@ -69,7 +69,7 @@ class QwenVLAdapter:
     支持多模态输入处理
     """
     
-    MODEL_NAME = "qwen2.5-vl:32b"
+    MODEL_NAME = "qwen2.5:7b"
     
     # 推荐的生成参数
     DEFAULT_OPTIONS = {
