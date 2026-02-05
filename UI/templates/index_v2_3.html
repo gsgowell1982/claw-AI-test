@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenClaw - AI Agent v2.3</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        /* 流式光标 */
+        .stream-cursor {
+            display: inline-block;
+            animation: blink 1s infinite;
+            color: var(--primary-color);
+            font-weight: bold;
+        }
+        
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+        
+        /* 版本标识 */
+        .version-tag {
+            font-size: 0.7rem;
+            opacity: 0.7;
+            margin-left: 8px;
+        }
+        
+        /* 工具调用样式 */
+        .tool-call-message {
+            background: linear-gradient(135deg, #fef3c7, #fde68a) !important;
+            border: 1px solid #f59e0b;
+        }
+        
+        .tool-call-message .message-content {
+            background: transparent !important;
+            color: #92400e !important;
+        }
+        
+        .tool-call-header {
+            font-weight: bold;
+            margin-bottom: 8px;
+            color: #b45309;
+        }
+        
+        .tool-list {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        
+        .tool-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 8px;
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: 4px;
+            font-size: 0.9rem;
+        }
+        
+        .tool-icon {
+            font-size: 1rem;
+        }
+        
+        .tool-name {
+            font-family: monospace;
+            font-weight: 500;
+        }
+        
+        .tool-status {
+            margin-left: auto;
+            font-size: 0.8rem;
+            color: #6b7280;
+        }
+        
+        .tool-status.success {
+            color: #059669;
+        }
+        
+        .tool-status.error {
+            color: #dc2626;
+        }
+        
+        /* 工具调用信息 */
+        .tool-calls-info {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px dashed rgba(0,0,0,0.1);
+            color: #6b7280;
+        }
+        
+        /* 代码块样式 */
+        pre {
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 12px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 8px 0;
+        }
+        
+        pre code {
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.9rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <header class="chat-header">
+            <h1>🦅 OpenClaw <span class="version-tag">v2.3 Agent</span></h1>
+            <span class="status" id="connection-status">连接中...</span>
+        </header>
+        
+        <div class="chat-messages" id="chat-messages">
+            <div class="message system">
+                <div class="message-content">
+                    欢迎使用 OpenClaw v2.3！我具备工具调用能力，可以帮您：<br>
+                    📂 查看目录内容<br>
+                    📄 读取文件<br>
+                    ✏️ 创建和编写文件<br>
+                    🐙 操作 GitHub 仓库<br><br>
+                    试试问我："列出当前项目的文件" 或 "读取 requirements.txt"
+                </div>
+            </div>
+        </div>
+        
+        <div class="chat-input-container">
+            <textarea 
+                id="message-input" 
+                placeholder="输入消息... (Enter 发送)"
+                rows="1"
+            ></textarea>
+            <button id="send-button" class="send-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="22" y1="2" x2="11" y2="13"></line>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                </svg>
+            </button>
+        </div>
+    </div>
+    
+    <script src="/static/js/chat_v2_3.js"></script>
+</body>
+</html>
