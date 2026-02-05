@@ -140,6 +140,39 @@ class GatewayAPI:
             )
         
         # ========== 聊天接口 ==========
+        @self.router.get(
+            "/chat",
+            summary="聊天接口说明",
+            description="获取聊天接口的使用说明（实际聊天请使用 POST 方法）"
+        )
+        async def chat_info():
+            """聊天接口使用说明"""
+            return {
+                "endpoint": "/api/chat",
+                "method": "POST",
+                "description": "发送消息到 AI 并获取回复",
+                "request_body": {
+                    "message": "(必填) 用户消息内容",
+                    "session_id": "(可选) 会话ID，不提供则自动创建",
+                    "context": "(可选) 额外上下文信息"
+                },
+                "example": {
+                    "curl": 'curl -X POST http://localhost:8000/api/chat -H "Content-Type: application/json" -d \'{"message": "你好"}\'',
+                    "request": {
+                        "message": "你好，请介绍一下你自己",
+                        "session_id": None,
+                        "context": {}
+                    }
+                },
+                "response": {
+                    "success": True,
+                    "response": "AI 回复内容",
+                    "session_id": "会话ID",
+                    "error": None,
+                    "timestamp": "响应时间戳"
+                }
+            }
+        
         @self.router.post(
             "/chat",
             response_model=ChatResponse,
