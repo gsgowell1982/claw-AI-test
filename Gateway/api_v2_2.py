@@ -1,10 +1,11 @@
 """
 Gateway API v2.2 - HTTP / WebSocket API 接口
 
-版本: v2.2
+版本: v2.2.1
 更新: 
 - 实现流式响应 (Streaming)
 - 添加完整的交互日志
+- 保存聊天记录到 Test 目录
 - 优化 WebSocket 处理
 - 支持 LLM 实时输出
 
@@ -20,6 +21,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 import asyncio
 import json
+import time
 from datetime import datetime
 
 from .session import SessionManager, Session
@@ -29,6 +31,9 @@ from .planner import Planner
 # 导入日志模块
 import logging
 logger = logging.getLogger("OpenClaw.Gateway")
+
+# 导入聊天日志记录器
+from Test.chat_logger import get_chat_logger, log_chat
 
 
 # ============== 请求/响应模型 ==============
@@ -203,6 +208,7 @@ class GatewayAPI:
         async def chat(request: ChatRequest):
             """处理聊天请求"""
             logger.info(f"[Chat] 收到消息: {request.message[:50]}...")
+            start_time = time.time()
             
             try:
                 # 获取或创建会话
@@ -225,11 +231,21 @@ class GatewayAPI:
                     response = await self._llm_client.chat(messages)
                     response_content = response.content
                     
-                    logger.info(f"[Chat] LLM 回复: {response_content[:100]}...")
+                    duration_ms = (time.time() - start_time) * 1000
+                    logger.info(f"[Chat] LLM 回复: {response_content[:100]}... (耗时: {duration_ms:.0f}ms)")
                     
                     # 保存到会话
                     session.add_message("user", request.message)
                     session.add_message("assistant", response_content)
+                    
+                    # 保存到 Test 目录日志
+                    log_chat(
+                        session_id=session.session_id,
+                        user_message=request.message,
+                        assistant_response=response_content,
+                        duration_ms=duration_ms,
+                        metadata={"source": "http"}
+                    )
                 else:
                     response_content = f"[LLM 未配置] 收到您的消息: {request.message}"
                     logger.warning("[Chat] LLM 客户端未配置")
@@ -344,6 +360,21 @@ class GatewayAPI:
             if not success:
                 raise HTTPException(status_code=404, detail="Session not found")
             return {"success": True, "message": f"Session {session_id} deleted"}
+        
+        # ========== 聊天日志 ==========
+        @self.router.get(
+            "/logs",
+            summary="获取聊天日志",
+            description="获取保存在 Test 目录的聊天交互日志"
+        )
+        async def get_chat_logs(limit: int = 20):
+            """获取聊天日志"""
+            chat_logger = get_chat_logger()
+            return {
+                "success": True,
+                "stats": chat_logger.get_stats(),
+                "recent": chat_logger.get_recent(limit=limit)
+            }
     
     def get_router(self) -> APIRouter:
         """获取路由器"""
@@ -397,6 +428,8 @@ class GatewayAPI:
                             # 流式生成
                             full_response = ""
                             token_count = 0
+                            start_time = time.time()
+                            
                             async for chunk in self._llm_client.chat_stream(messages):
                                 full_response += chunk
                                 token_count += 1
@@ -405,17 +438,30 @@ class GatewayAPI:
                                     "content": chunk
                                 })
                             
+                            # 计算耗时
+                            duration_ms = (time.time() - start_time) * 1000
+                            
                             # 发送流式结束信号
                             await websocket.send_json({
                                 "type": "stream_end",
                                 "timestamp": datetime.now().isoformat()
                             })
                             
-                            logger.info(f"[WebSocket:{session_id[:8]}] 生成完成, chunks: {token_count}, 长度: {len(full_response)}")
+                            logger.info(f"[WebSocket:{session_id[:8]}] 生成完成, chunks: {token_count}, 长度: {len(full_response)}, 耗时: {duration_ms:.0f}ms")
                             
                             # 保存到会话
                             session.add_message("user", content)
                             session.add_message("assistant", full_response)
+                            
+                            # 保存到 Test 目录日志
+                            log_chat(
+                                session_id=session_id,
+                                user_message=content,
+                                assistant_response=full_response,
+                                duration_ms=duration_ms,
+                                chunks=token_count,
+                                metadata={"source": "websocket"}
+                            )
                         else:
                             # LLM 未配置时的默认响应
                             await websocket.send_json({
