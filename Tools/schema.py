@@ -220,7 +220,7 @@ def generate_tools_prompt(tools: List[ToolDefinition]) -> str:
 
 ## GitHub 操作流程（非常重要）
 
-当用户要操作 GitHub（如创建仓库、查看仓库等）时，必须按照以下流程：
+当用户要操作 GitHub 时，必须按照以下流程：
 
 ### 步骤 1：检查用户是否提供了 Token
 - 如果用户在消息中提供了 Token（以 `ghp_` 开头的字符串），调用 `github_set_token` 工具
@@ -235,14 +235,39 @@ def generate_tools_prompt(tools: List[ToolDefinition]) -> str:
 - **token 参数必须是用户提供的实际 Token 字符串（以 ghp_ 开头），不能是占位符**
 
 ### 步骤 3：执行 GitHub 操作
-- Token 验证成功后，调用相应的 GitHub 工具（如 github_create_repo）
+- Token 验证成功后，调用相应的 GitHub 工具
 - 如果 Token 无效，告知用户错误信息并请求新的 Token
 
-### 示例：用户说"创建一个 test-repo 仓库"
-1. 你回复："请提供您的 GitHub Token 来创建仓库"
-2. 用户说："ghp_xxxxx 这是我的 token"
-3. 你调用：`github_set_token` (token="ghp_xxxxx")
-4. Token 有效后，调用：`github_create_repo` (name="test-repo")
+### GitHub 工具说明
+
+**仓库管理：**
+- `github_create_repo`: 创建新仓库
+- `github_delete_repo`: 删除仓库（需要 delete_repo 权限，操作不可逆！）
+- `github_list_repos`: 列出用户的仓库
+- `github_get_repo`: 获取仓库详情
+
+**Release 管理：**
+- `github_create_release`: 创建新的 Release 版本
+  - 必填参数：owner（仓库所有者）、repo（仓库名）、tag_name（版本号如 v1.0.0）
+  - 可选参数：name（标题）、body（说明，支持 Markdown）、draft、prerelease
+- `github_list_releases`: 列出仓库的所有 Release
+
+### 示例
+
+**创建仓库：**
+```json
+{{"tool_calls": [{{"name": "github_create_repo", "arguments": {{"name": "my-project", "description": "项目描述"}}}}]}}
+```
+
+**创建 Release：**
+```json
+{{"tool_calls": [{{"name": "github_create_release", "arguments": {{"owner": "username", "repo": "repo-name", "tag_name": "v1.0.0", "name": "v1.0.0 Release", "body": "## 更新内容\\n- 新功能1\\n- 修复bug"}}}}]}}
+```
+
+**删除仓库：**
+```json
+{{"tool_calls": [{{"name": "github_delete_repo", "arguments": {{"owner": "username", "repo": "repo-name"}}}}]}}
+```
 
 ## 文件操作说明
 

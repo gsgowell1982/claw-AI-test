@@ -1,8 +1,10 @@
 """
 GitHub Tools - GitHub 操作工具
 
-版本: v2.3.2
+版本: v2.3.3
 更新:
+- 新增创建 Release 功能
+- 新增删除仓库功能
 - 修复异步执行问题
 - 使用同步 HTTP 请求确保稳定性
 - 改进错误处理
@@ -10,8 +12,10 @@ GitHub Tools - GitHub 操作工具
 提供:
 - 设置/验证 Token
 - 创建仓库
+- 删除仓库
 - 列出仓库
 - 获取仓库信息
+- 创建 Release
 """
 
 import os
@@ -330,6 +334,157 @@ def github_get_repo(owner: str, repo: str) -> Dict[str, Any]:
     return result
 
 
+def github_delete_repo(owner: str, repo: str) -> Dict[str, Any]:
+    """
+    删除 GitHub 仓库
+    
+    警告：此操作不可逆！删除后仓库及其所有数据将永久丢失。
+    
+    Args:
+        owner: 仓库所有者（用户名）
+        repo: 仓库名称
+        
+    Returns:
+        删除结果
+    """
+    logger.info(f"[GitHub] 删除仓库: {owner}/{repo}")
+    
+    result = _make_github_request("DELETE", f"/repos/{owner}/{repo}")
+    
+    # DELETE 成功返回 204 No Content
+    if result.get("success") or result.get("status") == 204:
+        logger.info(f"[GitHub] 仓库删除成功: {owner}/{repo}")
+        return {
+            "success": True,
+            "message": f"✅ 仓库 {owner}/{repo} 已成功删除！"
+        }
+    
+    # 特殊处理 403 错误（权限不足）
+    if result.get("status") == 403:
+        return {
+            "success": False,
+            "error": f"❌ 没有权限删除仓库 {owner}/{repo}。请确保：\n1. 您是仓库的所有者\n2. Token 具有 delete_repo 权限"
+        }
+    
+    # 特殊处理 404 错误（仓库不存在）
+    if result.get("status") == 404:
+        return {
+            "success": False,
+            "error": f"❌ 仓库 {owner}/{repo} 不存在或您无权访问。"
+        }
+    
+    return result
+
+
+def github_create_release(
+    owner: str,
+    repo: str,
+    tag_name: str,
+    name: str = "",
+    body: str = "",
+    draft: bool = False,
+    prerelease: bool = False,
+    target_commitish: str = ""
+) -> Dict[str, Any]:
+    """
+    在 GitHub 仓库上创建 Release
+    
+    Args:
+        owner: 仓库所有者（用户名）
+        repo: 仓库名称
+        tag_name: 版本标签（如 v1.0.0）
+        name: Release 标题
+        body: Release 说明（支持 Markdown）
+        draft: 是否为草稿
+        prerelease: 是否为预发布版本
+        target_commitish: 目标分支或 commit SHA（默认为默认分支）
+        
+    Returns:
+        创建结果
+    """
+    logger.info(f"[GitHub] 创建 Release: {owner}/{repo} @ {tag_name}")
+    
+    data = {
+        "tag_name": tag_name,
+        "name": name or tag_name,
+        "body": body or f"Release {tag_name}",
+        "draft": draft,
+        "prerelease": prerelease
+    }
+    
+    if target_commitish:
+        data["target_commitish"] = target_commitish
+    
+    result = _make_github_request("POST", f"/repos/{owner}/{repo}/releases", data)
+    
+    if result.get("success"):
+        release_data = result.get("data", {})
+        logger.info(f"[GitHub] Release 创建成功: {release_data.get('html_url')}")
+        return {
+            "success": True,
+            "message": f"✅ Release {tag_name} 创建成功！",
+            "release": {
+                "id": release_data.get("id"),
+                "tag_name": release_data.get("tag_name"),
+                "name": release_data.get("name"),
+                "url": release_data.get("html_url"),
+                "draft": release_data.get("draft"),
+                "prerelease": release_data.get("prerelease"),
+                "created_at": release_data.get("created_at"),
+                "published_at": release_data.get("published_at")
+            }
+        }
+    
+    # 特殊处理已存在的 tag
+    if result.get("status") == 422:
+        error_msg = result.get("error", "")
+        if "already_exists" in error_msg.lower() or "already exists" in error_msg.lower():
+            return {
+                "success": False,
+                "error": f"❌ 标签 {tag_name} 已存在 Release。请使用其他版本号。"
+            }
+    
+    return result
+
+
+def github_list_releases(owner: str, repo: str) -> Dict[str, Any]:
+    """
+    列出 GitHub 仓库的 Release 列表
+    
+    Args:
+        owner: 仓库所有者
+        repo: 仓库名称
+        
+    Returns:
+        Release 列表
+    """
+    logger.info(f"[GitHub] 列出 Releases: {owner}/{repo}")
+    
+    result = _make_github_request("GET", f"/repos/{owner}/{repo}/releases?per_page=20")
+    
+    if result.get("success"):
+        releases = result.get("data", [])
+        return {
+            "success": True,
+            "count": len(releases),
+            "releases": [
+                {
+                    "id": r.get("id"),
+                    "tag_name": r.get("tag_name"),
+                    "name": r.get("name"),
+                    "url": r.get("html_url"),
+                    "draft": r.get("draft"),
+                    "prerelease": r.get("prerelease"),
+                    "created_at": r.get("created_at"),
+                    "published_at": r.get("published_at")
+                }
+                for r in releases
+            ]
+        }
+    
+    return result
+
+
 # ============== 工具定义 ==============
 
 GITHUB_SET_TOKEN_TOOL = ToolDefinition(
@@ -412,13 +567,120 @@ GITHUB_GET_REPO_TOOL = ToolDefinition(
     category="github"
 )
 
+GITHUB_DELETE_REPO_TOOL = ToolDefinition(
+    name="github_delete_repo",
+    description="删除 GitHub 仓库。警告：此操作不可逆！需要 Token 具有 delete_repo 权限",
+    parameters=[
+        ToolParameter(
+            name="owner",
+            type=ParameterType.STRING,
+            description="仓库所有者的用户名",
+            required=True
+        ),
+        ToolParameter(
+            name="repo",
+            type=ParameterType.STRING,
+            description="要删除的仓库名称",
+            required=True
+        )
+    ],
+    handler=github_delete_repo,
+    category="github"
+)
+
+GITHUB_CREATE_RELEASE_TOOL = ToolDefinition(
+    name="github_create_release",
+    description="在 GitHub 仓库上创建新的 Release 版本发布",
+    parameters=[
+        ToolParameter(
+            name="owner",
+            type=ParameterType.STRING,
+            description="仓库所有者的用户名",
+            required=True
+        ),
+        ToolParameter(
+            name="repo",
+            type=ParameterType.STRING,
+            description="仓库名称",
+            required=True
+        ),
+        ToolParameter(
+            name="tag_name",
+            type=ParameterType.STRING,
+            description="版本标签，如 v1.0.0",
+            required=True
+        ),
+        ToolParameter(
+            name="name",
+            type=ParameterType.STRING,
+            description="Release 标题",
+            required=False,
+            default=""
+        ),
+        ToolParameter(
+            name="body",
+            type=ParameterType.STRING,
+            description="Release 说明内容（支持 Markdown 格式）",
+            required=False,
+            default=""
+        ),
+        ToolParameter(
+            name="draft",
+            type=ParameterType.BOOLEAN,
+            description="是否为草稿（不公开）",
+            required=False,
+            default=False
+        ),
+        ToolParameter(
+            name="prerelease",
+            type=ParameterType.BOOLEAN,
+            description="是否为预发布版本",
+            required=False,
+            default=False
+        ),
+        ToolParameter(
+            name="target_commitish",
+            type=ParameterType.STRING,
+            description="目标分支名或 commit SHA（默认为仓库默认分支）",
+            required=False,
+            default=""
+        )
+    ],
+    handler=github_create_release,
+    category="github"
+)
+
+GITHUB_LIST_RELEASES_TOOL = ToolDefinition(
+    name="github_list_releases",
+    description="列出 GitHub 仓库的所有 Release 版本",
+    parameters=[
+        ToolParameter(
+            name="owner",
+            type=ParameterType.STRING,
+            description="仓库所有者的用户名",
+            required=True
+        ),
+        ToolParameter(
+            name="repo",
+            type=ParameterType.STRING,
+            description="仓库名称",
+            required=True
+        )
+    ],
+    handler=github_list_releases,
+    category="github"
+)
+
 
 # 导出所有 GitHub 工具
 GITHUB_TOOLS = [
     GITHUB_SET_TOKEN_TOOL,
     GITHUB_CREATE_REPO_TOOL,
+    GITHUB_DELETE_REPO_TOOL,
     GITHUB_LIST_REPOS_TOOL,
-    GITHUB_GET_REPO_TOOL
+    GITHUB_GET_REPO_TOOL,
+    GITHUB_CREATE_RELEASE_TOOL,
+    GITHUB_LIST_RELEASES_TOOL
 ]
 
 
