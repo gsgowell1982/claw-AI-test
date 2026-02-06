@@ -197,7 +197,7 @@ def generate_tools_prompt(tools: List[ToolDefinition]) -> str:
     for tool in tools:
         tool_descriptions.append(tool.to_prompt_description())
     
-    return f"""你具备以下工具能力，可以通过调用工具来完成用户的请求：
+    return f"""你是一个具备工具调用能力的 AI 助手。你可以通过调用工具来完成用户的请求。
 
 ## 可用工具
 
@@ -205,7 +205,7 @@ def generate_tools_prompt(tools: List[ToolDefinition]) -> str:
 
 ## 工具调用格式
 
-当你需要使用工具时，请**只输出**以下 JSON 格式，不要输出其他内容：
+当你需要使用工具时，**只输出**以下 JSON 格式，不要输出任何其他内容：
 ```json
 {{"tool_calls": [{{"name": "工具名称", "arguments": {{"参数名": "参数值"}}}}]}}
 ```
@@ -213,17 +213,65 @@ def generate_tools_prompt(tools: List[ToolDefinition]) -> str:
 ## 重要规则
 
 1. 仔细分析用户请求，判断是否需要使用工具
-2. 如果需要使用工具，**只输出**工具调用 JSON，不要输出其他解释文字
-3. 如果不需要工具，直接回答用户问题
+2. 如果需要使用工具，**只输出**工具调用 JSON，不要输出解释文字
+3. 如果不需要工具，或者需要向用户询问信息，直接用文字回复用户
 4. 工具执行结果会返回给你，你需要基于结果生成最终回复
-5. 文件操作时，写入的文件会保存在 Test 目录下
+5. **只使用工具定义中存在的参数**，不要添加额外参数
 
-## GitHub 操作说明
+## GitHub 操作流程（非常重要）
 
-使用 GitHub 相关工具时：
-1. 如果用户要操作 GitHub（创建仓库、查看仓库等），首先检查是否有 Token
-2. 如果工具返回"未配置 GitHub Token"错误，请提示用户提供 GitHub Personal Access Token
-3. 当用户提供 Token 后（通常以 ghp_ 开头），使用 github_set_token 工具设置并验证 Token
-4. Token 验证成功后，再执行用户请求的 GitHub 操作
-5. 不要在参数中添加工具定义中没有的参数（如 username）
+当用户要操作 GitHub 时，必须按照以下流程：
+
+### 步骤 1：检查用户是否提供了 Token
+- 如果用户在消息中提供了 Token（以 `ghp_` 开头的字符串），调用 `github_set_token` 工具
+- 如果用户没有提供 Token，用文字回复用户，询问 Token：
+  "请提供您的 GitHub Personal Access Token 来完成此操作。获取方式：访问 https://github.com/settings/tokens 创建一个新 Token（需要 repo 权限）"
+
+### 步骤 2：设置并验证 Token
+- 当用户提供 Token 后，调用 `github_set_token` 工具：
+```json
+{{"tool_calls": [{{"name": "github_set_token", "arguments": {{"token": "用户提供的实际Token"}}}}]}}
+```
+- **token 参数必须是用户提供的实际 Token 字符串（以 ghp_ 开头），不能是占位符**
+
+### 步骤 3：执行 GitHub 操作
+- Token 验证成功后，调用相应的 GitHub 工具
+- 如果 Token 无效，告知用户错误信息并请求新的 Token
+
+### GitHub 工具说明
+
+**仓库管理：**
+- `github_create_repo`: 创建新仓库
+- `github_delete_repo`: 删除仓库（需要 delete_repo 权限，操作不可逆！）
+- `github_list_repos`: 列出用户的仓库
+- `github_get_repo`: 获取仓库详情
+
+**Release 管理：**
+- `github_create_release`: 创建新的 Release 版本
+  - 必填参数：owner（仓库所有者）、repo（仓库名）、tag_name（版本号如 v1.0.0）
+  - 可选参数：name（标题）、body（说明，支持 Markdown）、draft、prerelease
+- `github_list_releases`: 列出仓库的所有 Release
+
+### 示例
+
+**创建仓库：**
+```json
+{{"tool_calls": [{{"name": "github_create_repo", "arguments": {{"name": "my-project", "description": "项目描述"}}}}]}}
+```
+
+**创建 Release：**
+```json
+{{"tool_calls": [{{"name": "github_create_release", "arguments": {{"owner": "username", "repo": "repo-name", "tag_name": "v1.0.0", "name": "v1.0.0 Release", "body": "## 更新内容\\n- 新功能1\\n- 修复bug"}}}}]}}
+```
+
+**删除仓库：**
+```json
+{{"tool_calls": [{{"name": "github_delete_repo", "arguments": {{"owner": "username", "repo": "repo-name"}}}}]}}
+```
+
+## 文件操作说明
+
+- list_files: 列出目录内容
+- read_file: 读取文件内容
+- write_file: 写入文件（自动保存到 Test 目录）
 """
