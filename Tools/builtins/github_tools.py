@@ -1,7 +1,12 @@
 """
 GitHub Tools - GitHub 操作工具
 
-版本: v2.3
+版本: v2.3.1
+更新:
+- 支持用户通过对话提供 GitHub Token
+- 改进错误信息提示
+- 添加 Token 验证
+
 提供:
 - 创建仓库
 - 列出仓库
@@ -18,7 +23,27 @@ from ..schema import ToolDefinition, ToolParameter, ParameterType
 
 # GitHub API 配置
 GITHUB_API_BASE = "https://api.github.com"
-GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "")
+
+# 会话级 Token 存储
+_session_token: Optional[str] = None
+
+
+def set_github_token(token: str) -> None:
+    """设置会话级 GitHub Token"""
+    global _session_token
+    _session_token = token
+
+
+def get_github_token() -> Optional[str]:
+    """获取 GitHub Token（优先使用会话 Token）"""
+    global _session_token
+    return _session_token or os.environ.get("GITHUB_TOKEN")
+
+
+def clear_github_token() -> None:
+    """清除会话级 Token"""
+    global _session_token
+    _session_token = None
 
 
 async def _make_github_request(
@@ -28,16 +53,18 @@ async def _make_github_request(
     token: Optional[str] = None
 ) -> Dict[str, Any]:
     """发起 GitHub API 请求"""
-    token = token or GITHUB_TOKEN
+    # 获取 Token
+    use_token = token or get_github_token()
     
-    if not token:
+    if not use_token:
         return {
             "success": False,
-            "error": "未配置 GitHub Token。请设置环境变量 GITHUB_TOKEN"
+            "error": "未配置 GitHub Token。请提供您的 GitHub Personal Access Token。\n\n获取方式：\n1. 访问 https://github.com/settings/tokens\n2. 点击 'Generate new token'\n3. 选择所需权限（至少需要 repo 权限）\n4. 复制生成的 Token\n\n然后告诉我您的 Token，或设置环境变量：\nexport GITHUB_TOKEN=your_token_here",
+            "need_token": True
         }
     
     headers = {
-        "Authorization": f"token {token}",
+        "Authorization": f"token {use_token}",
         "Accept": "application/vnd.github.v3+json",
         "User-Agent": "OpenClaw-Agent"
     }
@@ -45,32 +72,80 @@ async def _make_github_request(
     url = f"{GITHUB_API_BASE}{endpoint}"
     
     try:
-        async with aiohttp.ClientSession() as session:
+        timeout = aiohttp.ClientTimeout(total=30)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
             if method.upper() == "GET":
                 async with session.get(url, headers=headers) as response:
                     result = await response.json()
+                    if response.status == 401:
+                        return {
+                            "success": False,
+                            "error": "GitHub Token 无效或已过期。请检查您的 Token 是否正确。",
+                            "status": response.status,
+                            "need_token": True
+                        }
                     if response.status >= 400:
-                        return {"success": False, "error": result.get("message", str(result)), "status": response.status}
+                        error_msg = result.get("message", str(result))
+                        return {
+                            "success": False,
+                            "error": f"GitHub API 错误: {error_msg}",
+                            "status": response.status
+                        }
                     return {"success": True, "data": result, "status": response.status}
             
             elif method.upper() == "POST":
                 async with session.post(url, headers=headers, json=data) as response:
                     result = await response.json()
+                    if response.status == 401:
+                        return {
+                            "success": False,
+                            "error": "GitHub Token 无效或已过期。请检查您的 Token 是否正确。",
+                            "status": response.status,
+                            "need_token": True
+                        }
+                    if response.status == 422:
+                        errors = result.get("errors", [])
+                        if errors and errors[0].get("message") == "name already exists on this account":
+                            return {
+                                "success": False,
+                                "error": f"仓库名称 '{data.get('name')}' 已存在，请使用其他名称。",
+                                "status": response.status
+                            }
+                        return {
+                            "success": False,
+                            "error": f"请求参数错误: {result.get('message', str(result))}",
+                            "status": response.status
+                        }
                     if response.status >= 400:
-                        return {"success": False, "error": result.get("message", str(result)), "status": response.status}
+                        return {
+                            "success": False,
+                            "error": f"GitHub API 错误: {result.get('message', str(result))}",
+                            "status": response.status
+                        }
                     return {"success": True, "data": result, "status": response.status}
             
             elif method.upper() == "DELETE":
                 async with session.delete(url, headers=headers) as response:
                     if response.status == 204:
                         return {"success": True, "message": "删除成功", "status": response.status}
+                    if response.status == 401:
+                        return {
+                            "success": False,
+                            "error": "GitHub Token 无效或已过期。",
+                            "status": response.status,
+                            "need_token": True
+                        }
                     result = await response.json()
-                    if response.status >= 400:
-                        return {"success": False, "error": result.get("message", str(result)), "status": response.status}
-                    return {"success": True, "data": result, "status": response.status}
+                    return {
+                        "success": False,
+                        "error": f"删除失败: {result.get('message', str(result))}",
+                        "status": response.status
+                    }
     
-    except aiohttp.ClientError as e:
-        return {"success": False, "error": f"网络请求失败: {str(e)}"}
+    except aiohttp.ClientConnectorError:
+        return {"success": False, "error": "网络连接失败，请检查网络连接。"}
+    except asyncio.TimeoutError:
+        return {"success": False, "error": "请求超时，请稍后重试。"}
     except Exception as e:
         return {"success": False, "error": f"请求异常: {str(e)}"}
 
@@ -80,11 +155,10 @@ def _run_async(coro):
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
-            # 如果已有事件循环在运行，创建新任务
             import concurrent.futures
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 future = executor.submit(asyncio.run, coro)
-                return future.result()
+                return future.result(timeout=60)
         else:
             return loop.run_until_complete(coro)
     except RuntimeError:
@@ -94,7 +168,8 @@ def _run_async(coro):
 def github_create_repo(
     name: str,
     description: str = "",
-    private: bool = False
+    private: bool = False,
+    token: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     在 GitHub 上创建新仓库
@@ -103,16 +178,21 @@ def github_create_repo(
         name: 仓库名称
         description: 仓库描述
         private: 是否私有
+        token: GitHub Token (可选，如果之前已提供则不需要)
         
     Returns:
         创建结果
     """
+    # 如果提供了新 Token，保存它
+    if token:
+        set_github_token(token)
+    
     async def _create():
         data = {
             "name": name,
-            "description": description,
+            "description": description or f"Created by OpenClaw Agent",
             "private": private,
-            "auto_init": True  # 自动初始化 README
+            "auto_init": True
         }
         
         result = await _make_github_request("POST", "/user/repos", data)
@@ -121,7 +201,7 @@ def github_create_repo(
             repo_data = result.get("data", {})
             return {
                 "success": True,
-                "message": f"仓库创建成功: {repo_data.get('full_name')}",
+                "message": f"✅ 仓库创建成功！",
                 "repo": {
                     "name": repo_data.get("name"),
                     "full_name": repo_data.get("full_name"),
@@ -135,21 +215,28 @@ def github_create_repo(
     return _run_async(_create())
 
 
-def github_list_repos(username: Optional[str] = None) -> Dict[str, Any]:
+def github_list_repos(
+    username: Optional[str] = None,
+    token: Optional[str] = None
+) -> Dict[str, Any]:
     """
     列出 GitHub 仓库
     
     Args:
         username: 用户名，不提供则列出当前用户的仓库
+        token: GitHub Token (可选)
         
     Returns:
         仓库列表
     """
+    if token:
+        set_github_token(token)
+    
     async def _list():
         if username:
-            endpoint = f"/users/{username}/repos"
+            endpoint = f"/users/{username}/repos?sort=updated&per_page=20"
         else:
-            endpoint = "/user/repos"
+            endpoint = "/user/repos?sort=updated&per_page=20"
         
         result = await _make_github_request("GET", endpoint)
         
@@ -163,11 +250,11 @@ def github_list_repos(username: Optional[str] = None) -> Dict[str, Any]:
                         "name": r.get("name"),
                         "full_name": r.get("full_name"),
                         "url": r.get("html_url"),
-                        "description": r.get("description"),
+                        "description": r.get("description") or "",
                         "private": r.get("private"),
                         "stars": r.get("stargazers_count", 0)
                     }
-                    for r in repos[:20]  # 限制返回数量
+                    for r in repos
                 ]
             }
         return result
@@ -175,17 +262,25 @@ def github_list_repos(username: Optional[str] = None) -> Dict[str, Any]:
     return _run_async(_list())
 
 
-def github_get_repo(owner: str, repo: str) -> Dict[str, Any]:
+def github_get_repo(
+    owner: str,
+    repo: str,
+    token: Optional[str] = None
+) -> Dict[str, Any]:
     """
     获取 GitHub 仓库信息
     
     Args:
         owner: 仓库所有者
         repo: 仓库名称
+        token: GitHub Token (可选)
         
     Returns:
         仓库信息
     """
+    if token:
+        set_github_token(token)
+    
     async def _get():
         result = await _make_github_request("GET", f"/repos/{owner}/{repo}")
         
@@ -197,7 +292,7 @@ def github_get_repo(owner: str, repo: str) -> Dict[str, Any]:
                     "name": r.get("name"),
                     "full_name": r.get("full_name"),
                     "url": r.get("html_url"),
-                    "description": r.get("description"),
+                    "description": r.get("description") or "",
                     "private": r.get("private"),
                     "stars": r.get("stargazers_count", 0),
                     "forks": r.get("forks_count", 0),
@@ -211,11 +306,68 @@ def github_get_repo(owner: str, repo: str) -> Dict[str, Any]:
     return _run_async(_get())
 
 
+def github_set_token(token: str) -> Dict[str, Any]:
+    """
+    设置 GitHub Token
+    
+    Args:
+        token: GitHub Personal Access Token
+        
+    Returns:
+        设置结果
+    """
+    if not token or len(token) < 10:
+        return {
+            "success": False,
+            "error": "Token 格式不正确，请提供有效的 GitHub Personal Access Token。"
+        }
+    
+    # 验证 Token
+    async def _verify():
+        set_github_token(token)
+        result = await _make_github_request("GET", "/user")
+        
+        if result.get("success"):
+            user_data = result.get("data", {})
+            return {
+                "success": True,
+                "message": f"✅ GitHub Token 验证成功！已登录为: {user_data.get('login')}",
+                "user": {
+                    "login": user_data.get("login"),
+                    "name": user_data.get("name"),
+                    "url": user_data.get("html_url")
+                }
+            }
+        else:
+            clear_github_token()
+            return {
+                "success": False,
+                "error": "Token 验证失败: " + result.get("error", "未知错误")
+            }
+    
+    return _run_async(_verify())
+
+
 # ============== 工具定义 ==============
+
+GITHUB_SET_TOKEN_TOOL = ToolDefinition(
+    name="github_set_token",
+    description="设置并验证 GitHub Token（在执行其他 GitHub 操作前需要先设置）",
+    parameters=[
+        ToolParameter(
+            name="token",
+            type=ParameterType.STRING,
+            description="GitHub Personal Access Token（以 ghp_ 开头）",
+            required=True
+        )
+    ],
+    handler=github_set_token,
+    category="github"
+)
 
 GITHUB_CREATE_REPO_TOOL = ToolDefinition(
     name="github_create_repo",
-    description="在 GitHub 上创建新仓库",
+    description="在 GitHub 上创建新仓库（需要先设置 Token）",
     parameters=[
         ToolParameter(
             name="name",
@@ -280,7 +432,12 @@ GITHUB_GET_REPO_TOOL = ToolDefinition(
 
 
 # 导出所有 GitHub 工具
-GITHUB_TOOLS = [GITHUB_CREATE_REPO_TOOL, GITHUB_LIST_REPOS_TOOL, GITHUB_GET_REPO_TOOL]
+GITHUB_TOOLS = [
+    GITHUB_SET_TOKEN_TOOL,
+    GITHUB_CREATE_REPO_TOOL,
+    GITHUB_LIST_REPOS_TOOL,
+    GITHUB_GET_REPO_TOOL
+]
 
 
 def get_github_tools() -> List[ToolDefinition]:

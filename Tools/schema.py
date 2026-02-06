@@ -205,7 +205,7 @@ def generate_tools_prompt(tools: List[ToolDefinition]) -> str:
 
 ## 工具调用格式
 
-当你需要使用工具时，请使用以下 JSON 格式：
+当你需要使用工具时，请**只输出**以下 JSON 格式，不要输出其他内容：
 ```json
 {{"tool_calls": [{{"name": "工具名称", "arguments": {{"参数名": "参数值"}}}}]}}
 ```
@@ -213,8 +213,17 @@ def generate_tools_prompt(tools: List[ToolDefinition]) -> str:
 ## 重要规则
 
 1. 仔细分析用户请求，判断是否需要使用工具
-2. 如果需要使用工具，输出工具调用 JSON，不要输出其他内容
+2. 如果需要使用工具，**只输出**工具调用 JSON，不要输出其他解释文字
 3. 如果不需要工具，直接回答用户问题
 4. 工具执行结果会返回给你，你需要基于结果生成最终回复
-5. 文件操作时，写入的文件会保存在 test 目录下
+5. 文件操作时，写入的文件会保存在 Test 目录下
+
+## GitHub 操作说明
+
+使用 GitHub 相关工具时：
+1. 如果用户要操作 GitHub（创建仓库、查看仓库等），首先检查是否有 Token
+2. 如果工具返回"未配置 GitHub Token"错误，请提示用户提供 GitHub Personal Access Token
+3. 当用户提供 Token 后（通常以 ghp_ 开头），使用 github_set_token 工具设置并验证 Token
+4. Token 验证成功后，再执行用户请求的 GitHub 操作
+5. 不要在参数中添加工具定义中没有的参数（如 username）
 """
