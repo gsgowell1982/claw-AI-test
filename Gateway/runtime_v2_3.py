@@ -124,36 +124,108 @@ class ToolRuntime:
         """
         tool_calls = []
         
-        # 尝试解析 JSON 代码块
-        json_patterns = [
-            r'```json\s*(\{.*?\})\s*```',  # ```json {...} ```
-            r'```\s*(\{.*?\})\s*```',       # ``` {...} ```
-            r'(\{["\']?tool_calls["\']?\s*:.*?\})',  # 直接的 JSON
+        logger.debug(f"[Runtime] 开始解析工具调用，内容长度: {len(content)}")
+        
+        # 方法1: 尝试提取代码块中的 JSON
+        code_block_patterns = [
+            r'```json\s*([\s\S]*?)\s*```',  # ```json {...} ```
+            r'```\s*([\s\S]*?)\s*```',       # ``` {...} ```
         ]
         
-        for pattern in json_patterns:
-            matches = re.findall(pattern, content, re.DOTALL)
+        for pattern in code_block_patterns:
+            matches = re.findall(pattern, content)
+            logger.debug(f"[Runtime] 代码块模式匹配数: {len(matches)}")
             for match in matches:
-                try:
-                    data = json.loads(match)
+                parsed = self._try_parse_tool_json(match.strip())
+                if parsed:
+                    logger.info(f"[Runtime] 从代码块解析到 {len(parsed)} 个工具调用")
+                    tool_calls.extend(parsed)
+                    return tool_calls
+        
+        # 方法2: 尝试查找内联的 JSON 对象 (使用括号匹配)
+        json_objects = self._extract_json_objects(content)
+        logger.debug(f"[Runtime] 提取到 {len(json_objects)} 个 JSON 对象")
+        
+        for json_str in json_objects:
+            logger.debug(f"[Runtime] 尝试解析 JSON: {json_str[:100]}...")
+            parsed = self._try_parse_tool_json(json_str)
+            if parsed:
+                logger.info(f"[Runtime] 从内联 JSON 解析到 {len(parsed)} 个工具调用")
+                tool_calls.extend(parsed)
+                return tool_calls
+        
+        if "tool_calls" in content:
+            logger.warning(f"[Runtime] 内容包含 'tool_calls' 但未能解析")
+        
+        return tool_calls
+    
+    def _extract_json_objects(self, text: str) -> List[str]:
+        """
+        从文本中提取完整的 JSON 对象（处理嵌套大括号）
+        """
+        results = []
+        i = 0
+        while i < len(text):
+            if text[i] == '{':
+                # 找到一个 { ，尝试匹配完整的 JSON
+                start = i
+                depth = 0
+                in_string = False
+                escape = False
+                
+                j = i
+                while j < len(text):
+                    char = text[j]
                     
-                    # 处理 tool_calls 数组
-                    if "tool_calls" in data:
-                        for tc in data["tool_calls"]:
-                            tool_calls.append(ToolCall(
-                                name=tc.get("name", ""),
-                                arguments=tc.get("arguments", {}),
-                                id=tc.get("id")
-                            ))
-                    # 处理单个工具调用
-                    elif "name" in data:
+                    if escape:
+                        escape = False
+                    elif char == '\\':
+                        escape = True
+                    elif char == '"' and not escape:
+                        in_string = not in_string
+                    elif not in_string:
+                        if char == '{':
+                            depth += 1
+                        elif char == '}':
+                            depth -= 1
+                            if depth == 0:
+                                # 找到完整的 JSON 对象
+                                json_str = text[start:j+1]
+                                results.append(json_str)
+                                break
+                    j += 1
+                i = j + 1
+            else:
+                i += 1
+        
+        return results
+    
+    def _try_parse_tool_json(self, json_str: str) -> List[ToolCall]:
+        """
+        尝试将字符串解析为工具调用
+        """
+        tool_calls = []
+        try:
+            data = json.loads(json_str)
+            
+            # 处理 tool_calls 数组
+            if isinstance(data, dict) and "tool_calls" in data:
+                for tc in data["tool_calls"]:
+                    if isinstance(tc, dict) and "name" in tc:
                         tool_calls.append(ToolCall(
-                            name=data.get("name", ""),
-                            arguments=data.get("arguments", {}),
-                            id=data.get("id")
+                            name=tc.get("name", ""),
+                            arguments=tc.get("arguments", {}),
+                            id=tc.get("id")
                         ))
-                except json.JSONDecodeError:
-                    continue
+            # 处理单个工具调用
+            elif isinstance(data, dict) and "name" in data:
+                tool_calls.append(ToolCall(
+                    name=data.get("name", ""),
+                    arguments=data.get("arguments", {}),
+                    id=data.get("id")
+                ))
+        except json.JSONDecodeError:
+            pass
         
         return tool_calls
     

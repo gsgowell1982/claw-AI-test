@@ -199,7 +199,12 @@ class GatewayAPIV24:
             
             logger.info(f"[Agent] LLM 响应: {full_response[:200]}...")
             
+            # 检查是否包含工具调用标记
+            has_tool_marker = "tool_calls" in full_response or '"name"' in full_response
+            logger.info(f"[Agent] 响应包含工具调用标记: {has_tool_marker}")
+            
             tool_calls = self.runtime.parse_tool_calls(full_response)
+            logger.info(f"[Agent] 解析到的工具调用数量: {len(tool_calls)}")
             
             if not tool_calls:
                 if websocket and iteration == 1:
