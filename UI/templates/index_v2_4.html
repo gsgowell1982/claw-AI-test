@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenClaw - AI Agent v2.4</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        /* 流式光标 */
+        .stream-cursor {
+            display: inline-block;
+            animation: blink 1s infinite;
+            color: var(--primary-color);
+            font-weight: bold;
+        }
+        
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+        
+        /* 版本标识 */
+        .version-tag {
+            font-size: 0.7rem;
+            opacity: 0.7;
+            margin-left: 8px;
+        }
+        
+        /* 模型选择器 */
+        .model-selector {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 12px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            font-size: 0.85rem;
+        }
+        
+        .model-selector select {
+            background: transparent;
+            border: none;
+            color: inherit;
+            font-size: inherit;
+            cursor: pointer;
+            outline: none;
+            max-width: 180px;
+        }
+        
+        .model-selector select option {
+            background: #1f2937;
+            color: #fff;
+        }
+        
+        .model-type-badge {
+            font-size: 0.75rem;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-weight: 500;
+        }
+        
+        .model-type-badge.local {
+            background: #10b981;
+            color: white;
+        }
+        
+        .model-type-badge.cloud {
+            background: #3b82f6;
+            color: white;
+        }
+        
+        /* 头部布局调整 */
+        .chat-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        /* 工具调用样式 */
+        .tool-call-message {
+            background: linear-gradient(135deg, #fef3c7, #fde68a) !important;
+            border: 1px solid #f59e0b;
+        }
+        
+        .tool-call-message .message-content {
+            background: transparent !important;
+            color: #92400e !important;
+        }
+        
+        .tool-call-header {
+            font-weight: bold;
+            margin-bottom: 8px;
+            color: #b45309;
+        }
+        
+        .tool-list {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        
+        .tool-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 8px;
+            background: rgba(255, 255, 255, 0.5);
+            border-radius: 4px;
+            font-size: 0.9rem;
+        }
+        
+        .tool-icon {
+            font-size: 1rem;
+        }
+        
+        .tool-name {
+            font-family: monospace;
+            font-weight: 500;
+        }
+        
+        .tool-status {
+            margin-left: auto;
+            font-size: 0.8rem;
+            color: #6b7280;
+        }
+        
+        .tool-status.success {
+            color: #059669;
+        }
+        
+        .tool-status.error {
+            color: #dc2626;
+        }
+        
+        /* 模型信息显示 */
+        .model-info {
+            font-size: 0.75rem;
+            opacity: 0.7;
+            margin-top: 4px;
+        }
+        
+        /* 代码块样式 */
+        pre {
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 12px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 8px 0;
+        }
+        
+        pre code {
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.9rem;
+        }
+        
+        /* 消息中的模型标签 */
+        .message-model-tag {
+            font-size: 0.7rem;
+            opacity: 0.6;
+            margin-left: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <header class="chat-header">
+            <div class="header-left">
+                <h1>🦅 OpenClaw <span class="version-tag">v2.4</span></h1>
+            </div>
+            <div class="header-right">
+                <div class="model-selector">
+                    <span>🤖</span>
+                    <select id="model-select" title="选择模型">
+                        <option value="qwen2.5:7b">Qwen 2.5 7B (本地)</option>
+                        <option value="gpt-oss:120b-cloud">GPT-OSS 120B (云端)</option>
+                    </select>
+                    <span class="model-type-badge local" id="model-type-badge">本地</span>
+                </div>
+                <span class="status" id="connection-status">连接中...</span>
+            </div>
+        </header>
+        
+        <div class="chat-messages" id="chat-messages">
+            <div class="message system">
+                <div class="message-content">
+                    欢迎使用 OpenClaw v2.4！🎉<br><br>
+                    <strong>新功能：多模型支持</strong><br>
+                    💻 本地模型：Qwen 2.5 7B - 响应快速<br>
+                    ☁️ 云端模型：GPT-OSS 120B - 能力更强<br><br>
+                    <strong>工具能力：</strong><br>
+                    📂 文件操作 | 🐙 GitHub 管理 | 🚀 Release 发布<br><br>
+                    使用右上角选择器切换模型，或直接开始对话！
+                </div>
+            </div>
+        </div>
+        
+        <div class="chat-input-container">
+            <textarea 
+                id="message-input" 
+                placeholder="输入消息... (Enter 发送)"
+                rows="1"
+            ></textarea>
+            <button id="send-button" class="send-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="22" y1="2" x2="11" y2="13"></line>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                </svg>
+            </button>
+        </div>
+    </div>
+    
+    <script src="/static/js/chat_v2_4.js"></script>
+</body>
+</html>
