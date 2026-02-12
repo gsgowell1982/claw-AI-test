@@ -154,10 +154,118 @@ class ToolRuntime:
                 tool_calls.extend(parsed)
                 return tool_calls
         
-        if "tool_calls" in content:
-            logger.warning(f"[Runtime] 内容包含 'tool_calls' 但未能解析")
+        # 方法3: 最后尝试使用正则直接提取 (备用方案)
+        if "tool_calls" in content and not tool_calls:
+            logger.warning(f"[Runtime] 标准解析失败，尝试正则备用方案")
+            tool_calls = self._regex_fallback_parse(content)
+            if tool_calls:
+                logger.info(f"[Runtime] 正则备用方案解析到 {len(tool_calls)} 个工具调用")
+        
+        if "tool_calls" in content and not tool_calls:
+            logger.warning(f"[Runtime] 所有解析方案均失败")
         
         return tool_calls
+    
+    def _regex_fallback_parse(self, content: str) -> List[ToolCall]:
+        """
+        使用正则表达式作为备用解析方案
+        针对 write_file 等包含代码内容的工具调用
+        """
+        tool_calls = []
+        
+        # 匹配 write_file 工具调用
+        # 格式: {"name": "write_file", "arguments": {"filename": "xxx", "content": "..."}}
+        write_file_pattern = r'"name"\s*:\s*"write_file"\s*,\s*"arguments"\s*:\s*\{\s*"filename"\s*:\s*"([^"]+)"'
+        match = re.search(write_file_pattern, content)
+        
+        if match:
+            filename = match.group(1)
+            
+            # 尝试提取 content 字段
+            # 找到 "content": " 之后的内容，直到找到结束的引号和大括号
+            content_start = content.find('"content"', match.end())
+            if content_start > 0:
+                # 找到 "content": " 后的实际内容起始位置
+                quote_pos = content.find('"', content_start + len('"content"') + 1)
+                if quote_pos > 0:
+                    # 从这里开始找结束引号（需要处理转义）
+                    file_content = self._extract_string_value(content, quote_pos)
+                    if file_content is not None:
+                        tool_calls.append(ToolCall(
+                            name="write_file",
+                            arguments={"filename": filename, "content": file_content}
+                        ))
+                        return tool_calls
+        
+        # 匹配 list_files 工具调用
+        list_files_pattern = r'"name"\s*:\s*"list_files"\s*,\s*"arguments"\s*:\s*\{([^}]*)\}'
+        match = re.search(list_files_pattern, content)
+        if match:
+            args_str = match.group(1).strip()
+            arguments = {}
+            if args_str:
+                # 提取 path 参数
+                path_match = re.search(r'"path"\s*:\s*"([^"]*)"', args_str)
+                if path_match:
+                    arguments["path"] = path_match.group(1)
+            tool_calls.append(ToolCall(name="list_files", arguments=arguments))
+            return tool_calls
+        
+        # 匹配 read_file 工具调用
+        read_file_pattern = r'"name"\s*:\s*"read_file"\s*,\s*"arguments"\s*:\s*\{\s*"path"\s*:\s*"([^"]+)"'
+        match = re.search(read_file_pattern, content)
+        if match:
+            tool_calls.append(ToolCall(
+                name="read_file",
+                arguments={"path": match.group(1)}
+            ))
+            return tool_calls
+        
+        return tool_calls
+    
+    def _extract_string_value(self, text: str, start_quote_pos: int) -> Optional[str]:
+        """
+        从 JSON 字符串中提取值，处理转义字符
+        start_quote_pos 是开始引号的位置
+        """
+        result = []
+        i = start_quote_pos + 1  # 跳过开始引号
+        escape = False
+        
+        while i < len(text):
+            char = text[i]
+            
+            if escape:
+                # 处理转义字符
+                if char == 'n':
+                    result.append('\n')
+                elif char == 't':
+                    result.append('\t')
+                elif char == 'r':
+                    result.append('\r')
+                elif char == '"':
+                    result.append('"')
+                elif char == '\\':
+                    result.append('\\')
+                else:
+                    result.append(char)
+                escape = False
+            elif char == '\\':
+                escape = True
+            elif char == '"':
+                # 找到结束引号
+                return ''.join(result)
+            else:
+                result.append(char)
+            
+            i += 1
+        
+        # 如果没有找到结束引号，返回已收集的内容
+        if result:
+            logger.warning(f"[Runtime] 字符串值可能被截断，长度: {len(result)}")
+            return ''.join(result)
+        
+        return None
     
     def _extract_json_objects(self, text: str) -> List[str]:
         """
@@ -179,11 +287,20 @@ class ToolRuntime:
                     
                     if escape:
                         escape = False
-                    elif char == '\\':
+                        j += 1
+                        continue
+                    
+                    if char == '\\':
                         escape = True
-                    elif char == '"' and not escape:
+                        j += 1
+                        continue
+                    
+                    if char == '"':
                         in_string = not in_string
-                    elif not in_string:
+                        j += 1
+                        continue
+                    
+                    if not in_string:
                         if char == '{':
                             depth += 1
                         elif char == '}':
@@ -194,6 +311,15 @@ class ToolRuntime:
                                 results.append(json_str)
                                 break
                     j += 1
+                
+                # 如果没有找到匹配的结束括号，跳过这个起始括号
+                if depth != 0:
+                    logger.debug(f"[Runtime] JSON 括号不匹配，depth={depth}，可能被截断")
+                    # 尝试提取部分 JSON 用于修复
+                    partial_json = text[start:]
+                    if '"tool_calls"' in partial_json and partial_json not in results:
+                        results.append(partial_json)
+                
                 i = j + 1
             else:
                 i += 1
@@ -224,10 +350,78 @@ class ToolRuntime:
                     arguments=data.get("arguments", {}),
                     id=data.get("id")
                 ))
-        except json.JSONDecodeError:
-            pass
+        except json.JSONDecodeError as e:
+            # 记录解析错误
+            logger.warning(f"[Runtime] JSON 解析失败: {e}")
+            logger.debug(f"[Runtime] 失败的 JSON 字符串 (前500字符): {json_str[:500]}")
+            
+            # 尝试修复常见问题后重试
+            fixed_json = self._try_fix_json(json_str)
+            if fixed_json and fixed_json != json_str:
+                logger.info("[Runtime] 尝试修复后的 JSON...")
+                return self._try_parse_tool_json(fixed_json)
         
         return tool_calls
+    
+    def _try_fix_json(self, json_str: str) -> Optional[str]:
+        """
+        尝试修复常见的 JSON 问题
+        """
+        import re
+        
+        # 1. 如果 JSON 被截断，尝试找到最后一个完整的对象
+        # 查找 tool_calls 数组的结束
+        if '"tool_calls"' in json_str:
+            # 尝试找到 arguments 对象的结束位置
+            # 查找模式: "arguments": {...}
+            match = re.search(r'"arguments"\s*:\s*\{', json_str)
+            if match:
+                start = match.end() - 1  # { 的位置
+                depth = 0
+                end = -1
+                in_string = False
+                escape = False
+                
+                for i in range(start, len(json_str)):
+                    char = json_str[i]
+                    if escape:
+                        escape = False
+                        continue
+                    if char == '\\':
+                        escape = True
+                        continue
+                    if char == '"':
+                        in_string = not in_string
+                        continue
+                    if not in_string:
+                        if char == '{':
+                            depth += 1
+                        elif char == '}':
+                            depth -= 1
+                            if depth == 0:
+                                end = i
+                                break
+                
+                if end > 0:
+                    # 构建完整的 JSON
+                    # 提取 name 和 arguments
+                    name_match = re.search(r'"name"\s*:\s*"([^"]+)"', json_str)
+                    if name_match:
+                        name = name_match.group(1)
+                        arguments_str = json_str[start:end+1]
+                        try:
+                            arguments = json.loads(arguments_str)
+                            fixed = json.dumps({
+                                "tool_calls": [{
+                                    "name": name,
+                                    "arguments": arguments
+                                }]
+                            })
+                            return fixed
+                        except:
+                            pass
+        
+        return None
     
     def has_tool_calls(self, content: str) -> bool:
         """检查响应是否包含工具调用"""
