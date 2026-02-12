@@ -1,9 +1,9 @@
 #  OpenClaw-test  
 ## 本地强化型 AI Agent 执行框架（Local-First Agent Framework）
 
-**版本**：v2.3  
+**版本**：v2.4  
 **部署形态**：本地化 / 私有化部署  
-**当前模型**：Qwen2.5-7B（Ollama）
+**当前模型**：Qwen2.5-7B / 云端gpt-oss:120b（Ollama）
 
 ---
 
@@ -140,5 +140,5 @@ ollama pull qwen2.5:7b
 ```
 启动服务：
 ```bash
-python main_v2_3.py
+python main_v2_4.py
 ```
