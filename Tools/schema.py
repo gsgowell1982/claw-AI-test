@@ -274,4 +274,46 @@ def generate_tools_prompt(tools: List[ToolDefinition]) -> str:
 - list_files: 列出目录内容
 - read_file: 读取文件内容
 - write_file: 写入文件（自动保存到 Test 目录）
+
+## Python 代码执行和包管理（v2.5 新功能）
+
+当用户需要执行 Python 代码或进行文件转换时，使用以下工具：
+
+### 1. 检查包是否安装
+```json
+{{"tool_calls": [{{"name": "check_package", "arguments": {{"package_name": "python-pptx"}}}}]}}
+```
+
+### 2. 安装 Python 包（需要用户确认）
+- 当检查到包未安装时，先询问用户是否安装
+- 用户确认后（回复"是"、"安装"、"好的"等），再调用安装工具
+```json
+{{"tool_calls": [{{"name": "install_package", "arguments": {{"package_name": "python-pptx"}}}}]}}
+```
+
+### 3. 执行 Python 代码
+- 代码会创建临时脚本执行，执行后自动删除
+- 如果执行失败并检测到缺少包，会返回 `need_install: true` 和 `missing_packages` 列表
+```json
+{{"tool_calls": [{{"name": "execute_python", "arguments": {{"code": "print('Hello')", "description": "测试脚本"}}}}]}}
+```
+
+### 4. 文件格式转换（如 txt 转 pptx）
+- 会自动检查所需的包是否安装
+- 如果未安装，返回提示让用户确认安装
+```json
+{{"tool_calls": [{{"name": "convert_file", "arguments": {{"input_path": "Test/content.txt", "output_format": "pptx"}}}}]}}
+```
+
+### Python 工具使用流程
+
+**场景：用户要求将 txt 文件转换为 ppt**
+
+1. 调用 `convert_file` 或先用 `check_package` 检查 `python-pptx`
+2. 如果返回 `need_install: true`，告知用户需要安装包，询问是否安装
+3. 用户确认后，调用 `install_package` 安装
+4. 安装成功后，再次调用 `convert_file` 或 `execute_python` 执行转换
+5. 转换完成后，告知用户输出文件路径
+
+**重要：不要未经用户确认就安装包！**
 """

@@ -1,12 +1,15 @@
 """
-Tool Runtime v2.3 - 工具执行运行时
+Tool Runtime v2.5 - 工具执行运行时
 
-版本: v2.3
+版本: v2.5
 负责:
 - 工具注册与管理
 - 解析 LLM 的 tool_calls
 - 执行工具函数
 - 结果回传给 LLM
+
+更新:
+- 新增 Python 工具支持
 """
 
 from typing import Optional, Dict, Any, List, Callable
@@ -20,6 +23,7 @@ import logging
 from Tools.schema import ToolDefinition, generate_tools_prompt
 from Tools.builtins.file_tools import get_file_tools
 from Tools.builtins.github_tools import get_github_tools
+from Tools.builtins.python_tools import get_python_tools
 
 logger = logging.getLogger("OpenClaw.Runtime")
 
@@ -78,6 +82,11 @@ class ToolRuntime:
         
         # GitHub 工具
         for tool in get_github_tools():
+            self.register_tool(tool)
+            logger.info(f"[Runtime] 注册工具: {tool.name} ({tool.category})")
+        
+        # Python 工具
+        for tool in get_python_tools():
             self.register_tool(tool)
             logger.info(f"[Runtime] 注册工具: {tool.name} ({tool.category})")
     
