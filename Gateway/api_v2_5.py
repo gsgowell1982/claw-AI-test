@@ -1,11 +1,13 @@
 """
 Gateway API v2.5 - 集成记忆系统的 API 接口
 
-版本: v2.5.1
+版本: v2.5.2
 更新: 
 - 短期记忆：避免重复工具调用
 - 长期记忆：检索历史错误和解决方案
 - 智能错误分析：分析失败原因并建议修复
+- 智能包管理：区分"包未安装"和"代码导入错误"
+- 改进系统提示：引导 LLM 在安装前检查包状态
 
 负责:
 - HTTP REST API 端点
@@ -94,7 +96,7 @@ class GatewayAPIV25:
     Gateway API v2.5 - 集成记忆系统
     """
     
-    VERSION = "2.5.1"
+    VERSION = "2.5.2"
     MAX_TOOL_ITERATIONS = 5
     
     def __init__(self):
@@ -137,9 +139,28 @@ class GatewayAPIV25:
 
 你具备工具调用能力和记忆能力，可以帮助用户完成各种任务。
 
-## 重要：使用记忆避免重复操作
+## 重要规则
 
+### 1. 使用记忆避免重复操作
 在调用工具之前，请先检查下方的"当前会话已知信息"，如果已经有相关信息，直接使用而不要重复查询。
+
+### 2. Python 包管理规则（非常重要）
+- **安装前必须检查**：在安装任何包之前，先使用 `check_package` 检查是否已安装
+- **已安装的包不要重复安装**：如果 check_package 返回 installed=true，直接使用该包，不要再调用 install_package
+- **区分错误类型**：
+  - `missing_package` 错误：包未安装，需要安装
+  - `code_error` 或 `import_error`：包已安装，但代码有导入问题，需要修复代码而不是重新安装
+- **告知用户包状态**：执行任务前，如果检测到包已安装，应告知用户"所需包已安装，正在执行..."
+
+### 3. 文件转换规则
+- 使用 convert_file 工具时，它会自动检查所需包
+- 如果包已安装，会直接执行转换
+- 如果包未安装，才会提示用户确认安装
+
+### 4. 错误处理
+- 如果代码执行失败，仔细阅读错误信息
+- `cannot import name 'X' from 'Y'` 通常意味着包已安装，但导入路径或名称有误，需要修复代码
+- `No module named 'X'` 才表示包未安装
 
 """
         # 添加短期记忆上下文
@@ -413,13 +434,14 @@ class GatewayAPIV25:
             return APIInfo(
                 name="OpenClaw Gateway API",
                 version=self.VERSION,
-                description="OpenClaw AI Agent Platform v2.5.1 - 集成记忆系统",
+                description="OpenClaw AI Agent Platform v2.5.2 - 智能包管理",
                 current_model=model_info["name"],
                 model_type=model_info["type"],
                 features=[
                     "短期记忆：避免重复工具调用",
                     "长期记忆：检索历史错误和解决方案",
                     "智能错误分析：分析失败原因并建议修复",
+                    "智能包管理：安装前自动检查，区分错误类型",
                     "多模型支持",
                     "Python 代码执行"
                 ],
@@ -626,8 +648,8 @@ class GatewayAPIV25:
                 "tools": [t.name for t in self.runtime.list_tools()],
                 "current_model": model_info["name"],
                 "model_type": model_info["type"],
-                "features": ["short_term_memory", "long_term_memory", "error_analysis"],
-                "message": f"已连接 (v2.5.1)，当前模型: {model_info['name']}"
+                "features": ["short_term_memory", "long_term_memory", "error_analysis", "smart_package_check"],
+                "message": f"已连接 (v2.5.2)，当前模型: {model_info['name']}"
             })
             
             while True:

@@ -1,7 +1,7 @@
 """
-Tool Runtime v2.5 - 工具执行运行时
+Tool Runtime v2.5.2 - 工具执行运行时
 
-版本: v2.5
+版本: v2.5.2
 负责:
 - 工具注册与管理
 - 解析 LLM 的 tool_calls
@@ -10,6 +10,8 @@ Tool Runtime v2.5 - 工具执行运行时
 
 更新:
 - 新增 Python 工具支持
+- 新增 analyze_packages 工具
+- 改进错误分类
 """
 
 from typing import Optional, Dict, Any, List, Callable
