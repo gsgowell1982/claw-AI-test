@@ -1,7 +1,7 @@
 #  OpenClaw-test  
 ## 本地强化型 AI Agent 执行框架（Local-First Agent Framework）
 
-**版本**：v2.4  
+**版本**：v2.5.3  
 **部署形态**：本地化 / 私有化部署  
 **当前模型**：Qwen2.5-7B / 云端gpt-oss:120b（Ollama）
 
@@ -17,7 +17,7 @@
 - 自动化执行受控指令  
 - 外部 API（如 GitHub）联动  
 - 流式交互与可观测执行过程  
-- 可扩展的长期记忆与知识增强能力（规划中）
+- 可扩展的长期记忆与知识增强能力
 
 适用于以下场景：
 
@@ -43,7 +43,7 @@ OpenClaw/
 ├── Config/             # 配置管理：.env、Token 与运行参数
 └── main.py             # 系统入口：FastAPI 服务启动
 ```
-## 三、已实现功能阶段（Phase 1–3）
+## 三、已实现功能阶段（Phase 1–4）
 
 OpenClaw 当前已完成前三个阶段的核心能力建设，覆盖模型接入、通信机制以及基础 Agent 执行能力。
 
@@ -140,5 +140,5 @@ ollama pull qwen2.5:7b
 ```
 启动服务：
 ```bash
-python main_v2_4.py
+python main_v2_5_3.py
 ```
