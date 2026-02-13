@@ -1,13 +1,14 @@
 """
 Gateway API v2.5 - 集成记忆系统的 API 接口
 
-版本: v2.5.2
+版本: v2.5.3
 更新: 
 - 短期记忆：避免重复工具调用
 - 长期记忆：检索历史错误和解决方案
+- 语义级记忆检索：基于 Embedding 的相似度搜索
 - 智能错误分析：分析失败原因并建议修复
 - 智能包管理：区分"包未安装"和"代码导入错误"
-- 改进系统提示：引导 LLM 在安装前检查包状态
+- 执行历史自动清理：30天过期
 
 负责:
 - HTTP REST API 端点
@@ -96,7 +97,7 @@ class GatewayAPIV25:
     Gateway API v2.5 - 集成记忆系统
     """
     
-    VERSION = "2.5.2"
+    VERSION = "2.5.3"
     MAX_TOOL_ITERATIONS = 5
     
     def __init__(self):
@@ -130,7 +131,7 @@ class GatewayAPIV25:
             "type": model_type
         }
     
-    def _get_system_prompt(self, session_memory: ShortTermMemory) -> str:
+    def _get_system_prompt(self, session_memory: ShortTermMemory, user_query: str = "") -> str:
         """获取包含工具描述和记忆上下文的系统提示"""
         model_info = self._get_current_model_info()
         model_desc = f"当前使用模型: {model_info['name']} ({'云端' if model_info['type'] == 'cloud' else '本地'})"
@@ -167,6 +168,12 @@ class GatewayAPIV25:
         memory_context = session_memory.get_context_summary()
         if memory_context:
             base_prompt += memory_context + "\n\n"
+        
+        # 添加语义相关的历史经验（如果有查询）
+        if user_query:
+            semantic_context = self.long_term_memory.get_relevant_context(user_query, max_items=2)
+            if semantic_context:
+                base_prompt += semantic_context + "\n\n"
         
         # 添加工具描述
         tools_prompt = self.runtime.get_system_prompt()
@@ -291,8 +298,8 @@ class GatewayAPIV25:
         iteration = 0
         last_error_code = None  # 记录上次失败的代码，用于智能修复
         
-        # 构建初始消息（包含记忆上下文）
-        messages = [ChatMessage(role="system", content=self._get_system_prompt(session_memory))]
+        # 构建初始消息（包含记忆上下文和语义相关经验）
+        messages = [ChatMessage(role="system", content=self._get_system_prompt(session_memory, user_message))]
         
         for msg in session.get_history(limit=10):
             messages.append(ChatMessage(role=msg.role, content=msg.content))
@@ -434,16 +441,17 @@ class GatewayAPIV25:
             return APIInfo(
                 name="OpenClaw Gateway API",
                 version=self.VERSION,
-                description="OpenClaw AI Agent Platform v2.5.2 - 智能包管理",
+                description="OpenClaw AI Agent Platform v2.5.3 - 语义级记忆检索",
                 current_model=model_info["name"],
                 model_type=model_info["type"],
                 features=[
                     "短期记忆：避免重复工具调用",
                     "长期记忆：检索历史错误和解决方案",
+                    "语义级检索：基于 Embedding 的相似度搜索",
                     "智能错误分析：分析失败原因并建议修复",
-                    "智能包管理：安装前自动检查，区分错误类型",
-                    "多模型支持",
-                    "Python 代码执行"
+                    "自动清理：执行历史 30 天过期",
+                    "智能截断：保留代码核心结构",
+                    "多模型支持"
                 ],
                 endpoints=[
                     {"method": "GET", "path": "/api", "description": "API 信息"},
@@ -490,10 +498,53 @@ class GatewayAPIV25:
         @self.router.get("/memory/stats")
         async def memory_stats():
             """获取记忆统计信息"""
+            from Memory.embeddings import get_backend_info
+            
             return {
                 "success": True,
                 "long_term": self.long_term_memory.get_error_statistics(),
+                "tool_usage": self.long_term_memory.get_tool_usage_stats(days=7),
+                "embedding_backend": get_backend_info(),
                 "active_sessions": self.session_manager.count()
+            }
+        
+        @self.router.post("/memory/vacuum")
+        async def vacuum_memory():
+            """手动触发记忆清理"""
+            result = self.long_term_memory.vacuum_old_records()
+            return {
+                "success": True,
+                "message": f"清理完成，删除 {result['deleted_history']} 条过期记录",
+                "details": result
+            }
+        
+        @self.router.post("/memory/search")
+        async def semantic_search(request: dict):
+            """语义搜索历史经验"""
+            query = request.get("query", "")
+            top_k = request.get("top_k", 5)
+            
+            if not query:
+                raise HTTPException(status_code=400, detail="缺少 query 参数")
+            
+            experiences = self.long_term_memory.search_experiences_semantic(query, top_k=top_k)
+            
+            return {
+                "success": True,
+                "query": query,
+                "count": len(experiences),
+                "results": [
+                    {
+                        "id": exp.id,
+                        "category": exp.category,
+                        "trigger": exp.trigger_pattern,
+                        "action": exp.action,
+                        "outcome": exp.outcome,
+                        "confidence": exp.confidence,
+                        "use_count": exp.use_count
+                    }
+                    for exp in experiences
+                ]
             }
         
         @self.router.get("/models")
@@ -648,8 +699,8 @@ class GatewayAPIV25:
                 "tools": [t.name for t in self.runtime.list_tools()],
                 "current_model": model_info["name"],
                 "model_type": model_info["type"],
-                "features": ["short_term_memory", "long_term_memory", "error_analysis", "smart_package_check"],
-                "message": f"已连接 (v2.5.2)，当前模型: {model_info['name']}"
+                "features": ["short_term_memory", "long_term_memory", "semantic_search", "auto_cleanup"],
+                "message": f"已连接 (v2.5.3)，当前模型: {model_info['name']}"
             })
             
             while True:
