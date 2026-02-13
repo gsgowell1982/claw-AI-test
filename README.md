@@ -80,7 +80,7 @@ OpenClaw 当前已完成前三个阶段的核心能力建设，覆盖模型接�
 
 ---
 
-### Phase 3：Agent 执行能力与工具调用（当前阶段）
+### Phase 3：Agent 执行能力与工具调用
 
 Phase 3 是 OpenClaw 从“对话系统”迈向“执行型 Agent”的关键阶段。
 
