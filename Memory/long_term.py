@@ -1,288 +1,385 @@
 """
-Long Term Memory - 长期记忆
+Long-term Memory - 长期记忆管理
 
-负责:
-- 持久化存储
-- 数据压缩
-- 分级存储
+版本: v2.5.1
+功能:
+- 持久化存储错误模式和解决方案
+- 检索历史经验
+- 学习成功的修复策略
 """
 
+import sqlite3
+import json
+import hashlib
 from typing import Optional, Dict, Any, List
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-import json
-import threading
+import logging
+
+logger = logging.getLogger("OpenClaw.Memory.LongTerm")
 
 
 @dataclass
-class LongTermItem:
-    """长期记忆项"""
-    key: str
-    value: Any
-    created_at: datetime = field(default_factory=datetime.now)
-    updated_at: datetime = field(default_factory=datetime.now)
-    version: int = 1
-    tags: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "key": self.key,
-            "value": self.value,
-            "created_at": self.created_at.isoformat(),
-            "updated_at": self.updated_at.isoformat(),
-            "version": self.version,
-            "tags": self.tags,
-            "metadata": self.metadata
-        }
-    
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "LongTermItem":
-        return cls(
-            key=data["key"],
-            value=data["value"],
-            created_at=datetime.fromisoformat(data["created_at"]),
-            updated_at=datetime.fromisoformat(data["updated_at"]),
-            version=data.get("version", 1),
-            tags=data.get("tags", []),
-            metadata=data.get("metadata", {})
-        )
+class ErrorPattern:
+    """错误模式"""
+    id: int
+    error_type: str  # 错误类型 (ImportError, SyntaxError, etc.)
+    error_message: str  # 错误消息
+    context: str  # 上下文（工具、参数等）
+    solution: Optional[str]  # 解决方案
+    solution_code: Optional[str]  # 修复代码
+    success_count: int  # 成功次数
+    fail_count: int  # 失败次数
+    created_at: str
+    updated_at: str
+
+
+@dataclass
+class ExecutionHistory:
+    """执行历史"""
+    id: int
+    tool_name: str
+    arguments: str  # JSON
+    result: str  # JSON
+    success: bool
+    error_type: Optional[str]
+    error_message: Optional[str]
+    duration_ms: float
+    created_at: str
 
 
 class LongTermMemory:
     """
     长期记忆
     
-    提供持久化的长期存储
+    使用 SQLite 存储：
+    1. 错误模式和解决方案
+    2. 执行历史
+    3. 学习到的经验
     """
     
-    def __init__(
-        self,
-        storage_path: Optional[str] = None,
-        auto_save: bool = True
-    ):
-        self.storage_path = Path(storage_path) if storage_path else None
-        self.auto_save = auto_save
+    def __init__(self, db_path: Optional[str] = None):
+        if db_path is None:
+            db_path = Path(__file__).parent.parent / "data" / "long_term_memory.db"
         
-        self._storage: Dict[str, LongTermItem] = {}
-        self._lock = threading.Lock()
-        self._modified = False
+        self.db_path = Path(db_path)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         
-        # 加载已有数据
-        if self.storage_path and self.storage_path.exists():
-            self._load()
+        self._init_database()
+        logger.info(f"[LongTerm] 数据库初始化: {self.db_path}")
     
-    def set(
-        self,
-        key: str,
-        value: Any,
-        tags: Optional[List[str]] = None,
-        metadata: Optional[Dict[str, Any]] = None
-    ) -> bool:
-        """
-        设置记忆
-        
-        Args:
-            key: 键
-            value: 值
-            tags: 标签
-            metadata: 元数据
+    def _init_database(self) -> None:
+        """初始化数据库表"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
             
-        Returns:
-            是否成功
-        """
-        with self._lock:
-            existing = self._storage.get(key)
+            # 错误模式表
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS error_patterns (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    error_type TEXT NOT NULL,
+                    error_message TEXT NOT NULL,
+                    error_hash TEXT UNIQUE,
+                    context TEXT,
+                    solution TEXT,
+                    solution_code TEXT,
+                    success_count INTEGER DEFAULT 0,
+                    fail_count INTEGER DEFAULT 0,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # 执行历史表
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS execution_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tool_name TEXT NOT NULL,
+                    arguments TEXT,
+                    result TEXT,
+                    success INTEGER,
+                    error_type TEXT,
+                    error_message TEXT,
+                    duration_ms REAL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            # 学习经验表
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS learned_experiences (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    category TEXT NOT NULL,
+                    trigger_pattern TEXT,
+                    action TEXT,
+                    outcome TEXT,
+                    confidence REAL DEFAULT 0.5,
+                    use_count INTEGER DEFAULT 0,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
+            conn.commit()
+    
+    def _get_error_hash(self, error_type: str, error_message: str) -> str:
+        """生成错误的唯一哈希"""
+        # 提取错误消息的关键部分（去除具体路径等）
+        import re
+        normalized = re.sub(r"'[^']*'", "'X'", error_message)
+        normalized = re.sub(r'"[^"]*"', '"X"', normalized)
+        normalized = re.sub(r'\d+', 'N', normalized)
+        
+        content = f"{error_type}:{normalized}"
+        return hashlib.md5(content.encode()).hexdigest()
+    
+    def record_error(
+        self,
+        error_type: str,
+        error_message: str,
+        context: Optional[Dict[str, Any]] = None,
+        solution: Optional[str] = None,
+        solution_code: Optional[str] = None
+    ) -> int:
+        """记录错误模式"""
+        error_hash = self._get_error_hash(error_type, error_message)
+        context_str = json.dumps(context, ensure_ascii=False) if context else ""
+        
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            
+            # 检查是否已存在
+            cursor.execute(
+                'SELECT id, fail_count FROM error_patterns WHERE error_hash = ?',
+                (error_hash,)
+            )
+            existing = cursor.fetchone()
             
             if existing:
-                existing.value = value
-                existing.updated_at = datetime.now()
-                existing.version += 1
-                if tags:
-                    existing.tags = tags
-                if metadata:
-                    existing.metadata.update(metadata)
+                # 更新现有记录
+                cursor.execute('''
+                    UPDATE error_patterns 
+                    SET fail_count = fail_count + 1,
+                        context = COALESCE(?, context),
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                ''', (context_str or None, existing[0]))
+                record_id = existing[0]
+                logger.info(f"[LongTerm] 更新错误模式: {error_type}, 失败次数: {existing[1] + 1}")
             else:
-                self._storage[key] = LongTermItem(
-                    key=key,
-                    value=value,
-                    tags=tags or [],
-                    metadata=metadata or {}
-                )
+                # 插入新记录
+                cursor.execute('''
+                    INSERT INTO error_patterns 
+                    (error_type, error_message, error_hash, context, solution, solution_code, fail_count)
+                    VALUES (?, ?, ?, ?, ?, ?, 1)
+                ''', (error_type, error_message, error_hash, context_str, solution, solution_code))
+                record_id = cursor.lastrowid
+                logger.info(f"[LongTerm] 记录新错误模式: {error_type}")
             
-            self._modified = True
-            
-            if self.auto_save and self.storage_path:
-                self._save()
-            
-            return True
+            conn.commit()
+            return record_id
     
-    def get(self, key: str, default: Any = None) -> Any:
-        """
-        获取记忆
-        
-        Args:
-            key: 键
-            default: 默认值
-            
-        Returns:
-            值
-        """
-        item = self._storage.get(key)
-        return item.value if item else default
-    
-    def get_item(self, key: str) -> Optional[LongTermItem]:
-        """获取完整记忆项"""
-        return self._storage.get(key)
-    
-    def delete(self, key: str) -> bool:
-        """
-        删除记忆
-        
-        Args:
-            key: 键
-            
-        Returns:
-            是否成功
-        """
-        with self._lock:
-            if key in self._storage:
-                del self._storage[key]
-                self._modified = True
-                
-                if self.auto_save and self.storage_path:
-                    self._save()
-                
-                return True
-            return False
-    
-    def exists(self, key: str) -> bool:
-        """检查键是否存在"""
-        return key in self._storage
-    
-    def keys(self, pattern: Optional[str] = None) -> List[str]:
-        """获取所有键"""
-        keys = list(self._storage.keys())
-        
-        if pattern:
-            import fnmatch
-            keys = [k for k in keys if fnmatch.fnmatch(k, pattern)]
-        
-        return keys
-    
-    def search_by_tags(self, tags: List[str]) -> List[LongTermItem]:
-        """
-        按标签搜索
-        
-        Args:
-            tags: 标签列表
-            
-        Returns:
-            匹配的记忆项
-        """
-        results = []
-        
-        for item in self._storage.values():
-            if any(tag in item.tags for tag in tags):
-                results.append(item)
-        
-        return results
-    
-    def search_by_metadata(
+    def record_solution(
         self,
-        criteria: Dict[str, Any]
-    ) -> List[LongTermItem]:
-        """
-        按元数据搜索
+        error_type: str,
+        error_message: str,
+        solution: str,
+        solution_code: Optional[str] = None,
+        success: bool = True
+    ) -> None:
+        """记录解决方案"""
+        error_hash = self._get_error_hash(error_type, error_message)
         
-        Args:
-            criteria: 搜索条件
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
             
-        Returns:
-            匹配的记忆项
-        """
-        results = []
-        
-        for item in self._storage.values():
-            match = True
-            for key, value in criteria.items():
-                if item.metadata.get(key) != value:
-                    match = False
-                    break
+            if success:
+                cursor.execute('''
+                    UPDATE error_patterns 
+                    SET solution = ?,
+                        solution_code = ?,
+                        success_count = success_count + 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE error_hash = ?
+                ''', (solution, solution_code, error_hash))
+            else:
+                cursor.execute('''
+                    UPDATE error_patterns 
+                    SET fail_count = fail_count + 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE error_hash = ?
+                ''', (error_hash,))
             
-            if match:
-                results.append(item)
-        
-        return results
+            conn.commit()
+            logger.info(f"[LongTerm] 记录解决方案: {error_type}, 成功: {success}")
     
-    def clear(self) -> None:
-        """清空所有记忆"""
-        with self._lock:
-            self._storage.clear()
-            self._modified = True
-            
-            if self.auto_save and self.storage_path:
-                self._save()
-    
-    def size(self) -> int:
-        """获取记忆数量"""
-        return len(self._storage)
-    
-    def _save(self) -> bool:
-        """保存到文件"""
-        if not self.storage_path:
-            return False
+    def find_similar_error(
+        self,
+        error_type: str,
+        error_message: str
+    ) -> Optional[ErrorPattern]:
+        """查找相似的错误模式"""
+        error_hash = self._get_error_hash(error_type, error_message)
         
-        try:
-            self.storage_path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
             
-            data = {
-                key: item.to_dict()
-                for key, item in self._storage.items()
+            # 精确匹配
+            cursor.execute('''
+                SELECT id, error_type, error_message, context, solution, solution_code,
+                       success_count, fail_count, created_at, updated_at
+                FROM error_patterns 
+                WHERE error_hash = ? AND solution IS NOT NULL
+                ORDER BY success_count DESC
+                LIMIT 1
+            ''', (error_hash,))
+            
+            row = cursor.fetchone()
+            if row:
+                logger.info(f"[LongTerm] 找到精确匹配的错误模式: {error_type}")
+                return ErrorPattern(*row)
+            
+            # 模糊匹配（基于错误类型）
+            cursor.execute('''
+                SELECT id, error_type, error_message, context, solution, solution_code,
+                       success_count, fail_count, created_at, updated_at
+                FROM error_patterns 
+                WHERE error_type = ? AND solution IS NOT NULL
+                ORDER BY success_count DESC
+                LIMIT 1
+            ''', (error_type,))
+            
+            row = cursor.fetchone()
+            if row:
+                logger.info(f"[LongTerm] 找到类型匹配的错误模式: {error_type}")
+                return ErrorPattern(*row)
+            
+            return None
+    
+    def record_execution(
+        self,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        result: Any,
+        success: bool,
+        error_type: Optional[str] = None,
+        error_message: Optional[str] = None,
+        duration_ms: float = 0
+    ) -> None:
+        """记录执行历史"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO execution_history 
+                (tool_name, arguments, result, success, error_type, error_message, duration_ms)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                tool_name,
+                json.dumps(arguments, ensure_ascii=False),
+                json.dumps(result, ensure_ascii=False) if isinstance(result, (dict, list)) else str(result),
+                1 if success else 0,
+                error_type,
+                error_message,
+                duration_ms
+            ))
+            conn.commit()
+    
+    def get_error_statistics(self) -> Dict[str, Any]:
+        """获取错误统计"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            
+            # 总体统计
+            cursor.execute('SELECT COUNT(*) FROM error_patterns')
+            total_patterns = cursor.fetchone()[0]
+            
+            cursor.execute('SELECT COUNT(*) FROM error_patterns WHERE solution IS NOT NULL')
+            solved_patterns = cursor.fetchone()[0]
+            
+            # 按类型统计
+            cursor.execute('''
+                SELECT error_type, COUNT(*), SUM(success_count), SUM(fail_count)
+                FROM error_patterns
+                GROUP BY error_type
+                ORDER BY COUNT(*) DESC
+                LIMIT 10
+            ''')
+            by_type = cursor.fetchall()
+            
+            return {
+                "total_patterns": total_patterns,
+                "solved_patterns": solved_patterns,
+                "by_type": [
+                    {"type": t, "count": c, "successes": s or 0, "failures": f or 0}
+                    for t, c, s, f in by_type
+                ]
             }
-            
-            with open(self.storage_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            
-            self._modified = False
-            return True
-        except Exception:
-            return False
     
-    def _load(self) -> bool:
-        """从文件加载"""
-        if not self.storage_path or not self.storage_path.exists():
-            return False
+    def get_context_for_error(self, error_type: str, error_message: str) -> str:
+        """获取错误的上下文信息（用于 LLM）"""
+        pattern = self.find_similar_error(error_type, error_message)
         
-        try:
-            with open(self.storage_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            self._storage = {
-                key: LongTermItem.from_dict(item_data)
-                for key, item_data in data.items()
-            }
-            
-            return True
-        except Exception:
-            return False
-    
-    def save(self) -> bool:
-        """手动保存"""
-        with self._lock:
-            return self._save()
-    
-    def get_stats(self) -> Dict[str, Any]:
-        """获取统计信息"""
-        total_tags = set()
-        for item in self._storage.values():
-            total_tags.update(item.tags)
+        if not pattern:
+            return ""
         
-        return {
-            "total_items": len(self._storage),
-            "total_unique_tags": len(total_tags),
-            "storage_path": str(self.storage_path) if self.storage_path else None,
-            "auto_save": self.auto_save,
-            "modified": self._modified
-        }
+        parts = [f"## 历史经验：{error_type}"]
+        parts.append(f"\n**之前遇到过类似错误** (成功修复 {pattern.success_count} 次)")
+        
+        if pattern.solution:
+            parts.append(f"\n**解决方案**：{pattern.solution}")
+        
+        if pattern.solution_code:
+            parts.append(f"\n**参考代码**：\n```python\n{pattern.solution_code[:500]}\n```")
+        
+        return "\n".join(parts)
+    
+    def learn_from_success(
+        self,
+        category: str,
+        trigger: str,
+        action: str,
+        outcome: str
+    ) -> None:
+        """从成功经验中学习"""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            
+            # 检查是否已存在相似经验
+            cursor.execute('''
+                SELECT id, confidence, use_count FROM learned_experiences
+                WHERE category = ? AND trigger_pattern = ?
+            ''', (category, trigger))
+            
+            existing = cursor.fetchone()
+            
+            if existing:
+                # 增加置信度
+                new_confidence = min(1.0, existing[1] + 0.1)
+                cursor.execute('''
+                    UPDATE learned_experiences
+                    SET confidence = ?, use_count = use_count + 1, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                ''', (new_confidence, existing[0]))
+            else:
+                # 添加新经验
+                cursor.execute('''
+                    INSERT INTO learned_experiences
+                    (category, trigger_pattern, action, outcome, confidence, use_count)
+                    VALUES (?, ?, ?, ?, 0.5, 1)
+                ''', (category, trigger, action, outcome))
+            
+            conn.commit()
+            logger.info(f"[LongTerm] 学习经验: {category} - {trigger[:50]}")
+
+
+# 全局长期记忆实例
+_long_term_memory: Optional[LongTermMemory] = None
+
+
+def get_long_term_memory() -> LongTermMemory:
+    """获取长期记忆实例"""
+    global _long_term_memory
+    if _long_term_memory is None:
+        _long_term_memory = LongTermMemory()
+    return _long_term_memory
